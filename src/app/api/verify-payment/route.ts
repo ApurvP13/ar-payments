@@ -9,6 +9,7 @@ export async function POST(request: NextRequest) {
       razorpay_signature,
       userId,
       plan,
+      email,
     } = await request.json();
 
     // Verify payment signature

@@ -2,6 +2,7 @@
 
 import { useSearchParams, useRouter } from "next/navigation";
 import { useState, useEffect, Suspense } from "react";
+import { supabase } from "@/lib/supabase";
 
 // Separate component to handle search params
 function PaymentContent() {
@@ -9,11 +10,50 @@ function PaymentContent() {
   const router = useRouter();
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState("");
+  const [finalAmount, setFinalAmount] = useState(0);
+  const [appliedCouponId, setAppliedCouponId] = useState("");
 
   const plan = searchParams.get("plan") || "";
   const userId = searchParams.get("user") || "";
   const amount = parseInt(searchParams.get("amount") || "0");
   const returnUrl = searchParams.get("return_url") || "";
+  const couponCode = searchParams.get("coupon") || "";
+
+  useEffect(() => {
+    const validateCoupon = async () => {
+      try {
+        if (couponCode) {
+          const couponResponse = await fetch("/api/validate-coupon", {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+            },
+            body: JSON.stringify({ coupon: couponCode }),
+          });
+
+          const couponResult = await couponResponse.json();
+
+          if (couponResult.valid) {
+            const discount = couponResult.discount;
+            const discountedAmount = Math.floor(
+              amount - (amount * discount) / 100
+            );
+
+            setFinalAmount(discountedAmount); // use state instead of direct assignment
+            setAppliedCouponId(couponResult.code);
+          } else {
+            setError("Invalid or expired coupon");
+            setIsLoading(false);
+            setFinalAmount(amount);
+          }
+        }
+      } catch (error) {
+        console.error(error);
+      }
+    };
+
+    validateCoupon(); // invoke it
+  }, []);
 
   const planNames: { [key: string]: string } = {
     basic: "Basic Plan",
@@ -43,14 +83,27 @@ function PaymentContent() {
     setError("");
 
     try {
-      // Create order
+      // Fetch user info
+      const { data: userProfile, error } = await supabase
+        .from("user_profile")
+        .select("display_name, email")
+        .eq("user_id", userId)
+        .single();
+
+      if (error || !userProfile) {
+        throw new Error("Unable to fetch user info");
+      }
+
+      const { display_name, email } = userProfile;
+
+      // Create order with finalAmount
       const response = await fetch("/api/create-order", {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
         },
         body: JSON.stringify({
-          amount,
+          amount: finalAmount,
           plan,
           userId,
           returnUrl,
@@ -63,7 +116,7 @@ function PaymentContent() {
         throw new Error(order.error || "Failed to create order");
       }
 
-      // Initialize Razorpay
+      // Razorpay modal config
       const options = {
         key: process.env.NEXT_PUBLIC_RAZORPAY_KEY_ID,
         amount: order.amount,
@@ -72,8 +125,17 @@ function PaymentContent() {
         description: `${planNames[plan] || "Subscription Plan"}`,
         order_id: order.id,
         handler: async function (response: any) {
-          // Payment successful - verify and update user plan
           try {
+            if (appliedCouponId) {
+              await fetch("/api/mark-coupon-used", {
+                method: "POST",
+                headers: {
+                  "Content-Type": "application/json",
+                },
+                body: JSON.stringify({ couponId: appliedCouponId }),
+              });
+            }
+
             const verifyResponse = await fetch("/api/verify-payment", {
               method: "POST",
               headers: {
@@ -85,13 +147,13 @@ function PaymentContent() {
                 razorpay_signature: response.razorpay_signature,
                 userId,
                 plan,
+                email, // 👈 Attach user's email
               }),
             });
 
             const verifyResult = await verifyResponse.json();
 
             if (verifyResponse.ok) {
-              // Redirect to success page
               const successUrl = `${returnUrl}?status=success&payment_id=${response.razorpay_payment_id}`;
               window.location.href = successUrl;
             } else {
@@ -107,9 +169,9 @@ function PaymentContent() {
           }
         },
         prefill: {
-          name: "User",
-          email: "user@example.com",
-          contact: "9999999999",
+          name: display_name || "User",
+          email: email || "user@example.com",
+          // contact: "9999999999", // optional — fill from your database if stored
         },
         notes: {
           user_id: userId,
@@ -154,7 +216,7 @@ function PaymentContent() {
           </div>
           <div className="flex justify-between items-center py-2 border-b border-white/20">
             <span className="text-gray-400">Amount:</span>
-            <span className="font-semibold text-xl">₹{amount}</span>
+            <span className="font-semibold text-xl">₹{finalAmount}</span>
           </div>
           <div className="flex justify-between items-center py-2">
             <span className="text-gray-400">User ID:</span>
