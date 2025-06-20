@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import crypto from "crypto";
+import { supabase } from "@/lib/supabase";
 
 export async function POST(request: NextRequest) {
   try {
@@ -10,9 +11,10 @@ export async function POST(request: NextRequest) {
       userId,
       plan,
       email,
+      couponCode, // 👈 You send this from frontend only if used
     } = await request.json();
 
-    // Verify payment signature
+    // ✅ Verify signature
     const generatedSignature = crypto
       .createHmac("sha256", process.env.RAZORPAY_KEY_SECRET!)
       .update(`${razorpay_order_id}|${razorpay_payment_id}`)
@@ -25,29 +27,34 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    // Payment verified successfully
-    console.log("Payment verified successfully:", {
+    console.log("✅ Payment verified:", {
       paymentId: razorpay_payment_id,
       orderId: razorpay_order_id,
       userId,
       plan,
+      couponCode,
     });
 
-    // TODO: Update your main app's database here
-    // You can make an API call to your main app's backend
-    // Or update the database directly if both apps share the same DB
+    // ✅ If a coupon was used, increment used_count
+    if (couponCode && couponCode !== "") {
+      // Fetch current used_count
+      const { data: couponData, error: fetchError } = await supabase
+        .from("coupons")
+        .select("used_count")
+        .eq("code", couponCode)
+        .single();
 
-    // Example API call to main app:
-    // await fetch('https://your-main-app.com/api/update-user-plan', {
-    //   method: 'POST',
-    //   headers: { 'Content-Type': 'application/json' },
-    //   body: JSON.stringify({
-    //     userId,
-    //     plan: 'paid',
-    //     paymentId: razorpay_payment_id,
-    //     orderId: razorpay_order_id
-    //   })
-    // })
+      if (!fetchError && couponData) {
+        const { error: updateError } = await supabase
+          .from("coupons")
+          .update({ used_count: couponData.used_count + 1 })
+          .eq("code", couponCode);
+
+        if (updateError) {
+          console.error("Failed to update used_count:", updateError.message);
+        }
+      }
+    }
 
     return NextResponse.json({
       success: true,

@@ -15,7 +15,7 @@ function PaymentContent() {
 
   const plan = searchParams.get("plan") || "";
   const userId = searchParams.get("user") || "";
-  const amount = parseInt(searchParams.get("amount") || "0");
+  const amount = 1499;
   const returnUrl = searchParams.get("return_url") || "";
   const couponCode = searchParams.get("coupon") || "";
 
@@ -103,7 +103,7 @@ function PaymentContent() {
           "Content-Type": "application/json",
         },
         body: JSON.stringify({
-          amount: finalAmount,
+          coupon: couponCode || "",
           plan,
           userId,
           returnUrl,
@@ -126,16 +126,6 @@ function PaymentContent() {
         order_id: order.id,
         handler: async function (response: any) {
           try {
-            if (appliedCouponId) {
-              await fetch("/api/mark-coupon-used", {
-                method: "POST",
-                headers: {
-                  "Content-Type": "application/json",
-                },
-                body: JSON.stringify({ couponId: appliedCouponId }),
-              });
-            }
-
             const verifyResponse = await fetch("/api/verify-payment", {
               method: "POST",
               headers: {
@@ -148,6 +138,7 @@ function PaymentContent() {
                 userId,
                 plan,
                 email, // 👈 Attach user's email
+                couponCode,
               }),
             });
 
